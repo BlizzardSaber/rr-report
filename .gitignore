@@ -1,0 +1,16 @@
+# 忽略目录内容，但保留 .gitkeep 以维持目录结构
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+output/*
+!output/.gitkeep
+
+# 敏感配置（含 API key 与邮箱授权码）
+config/config.json
+
+# 本地环境
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

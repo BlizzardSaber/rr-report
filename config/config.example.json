@@ -1,0 +1,29 @@
+{
+  "rr": {
+    "base_url": "https://your-pod.roundrobin-assignment.com/call/12345",
+    "api_key": "your_rr_api_key",
+    "assignment_proc": "___get_assignment_log",
+    "availability_proc": "___get_agent_availability",
+    "tz_offset_hours": 8
+  },
+  "smtp": {
+    "host": "smtp.qq.com",
+    "port": 465,
+    "use_ssl": true,
+    "username": "sender@example.com",
+    "password": "your_smtp_password_or_auth_code",
+    "from_name": "RR数据机器人"
+  },
+  "recipients": [
+    "recipient1@example.com",
+    "recipient2@example.com"
+  ],
+  "schedule": {
+    "pull_interval_minutes": 30,
+    "push_times": ["09:00"]
+  },
+  "report": {
+    "assignment_window_hours": 24,
+    "availability_days": 14
+  }
+}
