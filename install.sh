@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
 #  RR 数据推送 — 一行命令部署脚本
-#  用法（发布到 GitHub 后）：
-#    curl -fsSL https://raw.githubusercontent.com/<用户>/<仓库>/main/install.sh | bash
+#  用法：
+#    curl -fsSL https://raw.githubusercontent.com/BlizzardSaber/rr-report/main/install.sh | bash
 #  或本地直接：
 #    ./install.sh
 # ============================================================================
