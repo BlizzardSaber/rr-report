@@ -48,7 +48,6 @@ DEFAULTS: dict[str, Any] = {
             "day": ["08:30", "18:00"],
             "mid": [["19:00", "23:00"]],
         },
-        "shift_early_minutes": 20,
     },
 }
 

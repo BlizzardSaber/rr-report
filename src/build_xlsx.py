@@ -11,11 +11,10 @@
 
 班次判定（夜班名单固定；其他人按分配时间投票，同一人在所有页签标注一致）：
 - 名单内（默认 Floria/Linna/Eva/Nancy）→ 永远夜班
-- 白班 08:30-18:00（提前 tol 分钟内接单也算白班）；中班 19:00-23:00
-  （提前 tol 分钟内接单也算中班，18:00 收班到中班开始之间的零星分配归中班）；
-  其余时段（23:00 后 ~ 次日 08:10 前）投夜班；得票多者胜出
-- 只有会话、没有分配记录的客服，退化为按登录时刻投票（上午登录→白班，
-  晚间登录→中班，凌晨登录→夜班）
+- 白班 08:30-18:00、中班 19:00-23:00（收班后 18:00-23:00 的分配归中班），
+  其余时段（23:00 后 ~ 次日 08:30 前）投夜班；得票多者胜出
+  （班次时间本身已含提前接单的容错，不再额外外扩）
+- 只有会话、没有分配记录的客服，按登录时刻投票兜底（同一套时段）
 """
 
 from __future__ import annotations
@@ -62,11 +61,11 @@ class ShiftRules:
     """从 config.report 解析班次时段，提供按「一天内分钟数」投票的判定。
 
     时段模型：白班 day=[开始,结束]；中班 mid=多段 [开始,结束]（当前仅 19:00-23:00）。
+    班次时间本身已含提前接单的容错，不再额外外扩。
     """
 
     def __init__(self, report_cfg: dict):
         self.night_names = {n.strip().lower() for n in report_cfg.get("night_shift_agents", [])}
-        self.tol = int(report_cfg.get("shift_early_minutes", 20))
         shifts = report_cfg.get("shifts", {})
         day = shifts.get("day", ["08:30", "18:00"])
         self.day_s = _to_minutes(day[0])
@@ -78,18 +77,10 @@ class ShiftRules:
     def is_fixed_night(self, name: str) -> bool:
         return name.strip().lower() in self.night_names
 
-    def vote(self, m: int) -> str | None:
-        """按一天内分钟数投票：白班 [day_s-tol, day_e]；中班 (day_e, mid_last_e]
-        （含提前 tol 分钟接单与收班后的零星分配）；其余为夜班。"""
-        if m < self.day_s - self.tol or m > self.mid_last_e:
-            return "夜班"
-        if m <= self.day_e:
-            return "白班"
-        return "中班"
-
-    def vote_login(self, m: int) -> str | None:
-        """按登录时刻投票（仅用于没有分配记录的客服兜底）。"""
-        if m < self.day_s - self.tol:
+    def vote(self, m: int) -> str:
+        """按一天内分钟数投票：白班 [day_s, day_e]；中班 (day_e, mid_last_e]；
+        其余（深夜）为夜班。"""
+        if m < self.day_s or m > self.mid_last_e:
             return "夜班"
         if m <= self.day_e:
             return "白班"
@@ -112,8 +103,7 @@ def infer_agent_shifts(assignment_rows: list[dict[str, Any]],
             continue
         tod = _shift_tz(r["event_date_utc"], tz_offset_hours)
         vote = rules.vote(tod.hour * 60 + tod.minute)
-        if vote:
-            votes.setdefault(name, {"白班": 0, "中班": 0, "夜班": 0})[vote] += 1
+        votes.setdefault(name, {"白班": 0, "中班": 0, "夜班": 0})[vote] += 1
 
     for r in session_rows:  # 没有分配记录的客服，用登录时刻兜底投票
         name = r["agent_name"]
@@ -123,9 +113,8 @@ def infer_agent_shifts(assignment_rows: list[dict[str, Any]],
         if name in votes or name in labels:
             continue
         tod = _shift_tz(r["start_utc"], tz_offset_hours)
-        vote = rules.vote_login(tod.hour * 60 + tod.minute)
-        if vote:
-            votes.setdefault(name, {"白班": 0, "中班": 0, "夜班": 0})[vote] += 1
+        vote = rules.vote(tod.hour * 60 + tod.minute)
+        votes.setdefault(name, {"白班": 0, "中班": 0, "夜班": 0})[vote] += 1
 
     for name, v in votes.items():
         labels[name] = max(v, key=v.get)
