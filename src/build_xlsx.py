@@ -189,7 +189,9 @@ def build_report_xlsx(
         agg["tickets"].add(str(r["ticket_id"]))
         agg["count"] += 1
     ws3.append(SHEET3_HEADERS)
-    for key in sorted(summary, key=lambda k: (k[0], k[1], -len(summary[k]["tickets"]), k[3])):
+    # 日期倒序（最新在上）→ 班次 夜→白→中 → 工单量降序 → 客服名
+    for key in sorted(summary, key=lambda k: (-int(k[0].replace("-", "")), k[1],
+                                              -len(summary[k]["tickets"]), k[3])):
         date_str, _, shift_label, name = key
         agg = summary[key]
         ws3.append([date_str, shift_label, name, len(agg["tickets"]), agg["count"]])
