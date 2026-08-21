@@ -9,12 +9,12 @@
 样式：全表 Arial 10、时间列 yyyy-mm-dd hh:mm:ss、冻结首行；
 明细页不按人分组（同一人的记录按时间与其他人自然穿插）。
 
-班次判定（夜班名单固定；其他人按分配时间投票，同一人在所有页签标注一致）：
-- 名单内（默认 Floria/Linna/Eva/Nancy）→ 永远夜班
-- 白班 08:30-18:00、中班 19:00-23:00（收班后 18:00-23:00 的分配归中班），
-  其余时段（23:00 后 ~ 次日 08:30 前）投夜班；得票多者胜出
+班次判定（逐行按记录时间落段，夜班名单固定）：
+- 名单内（默认 Floria/Linna/Eva/Nancy）→ 永远夜班（无论时间）
+- 其他客服按该条记录自己的时间判定：白班 08:30-18:00、中班 19:00-23:00
+  （收班后 18:00-23:00 的分配归中班），其余时段（23:00 后 ~ 次日 08:30 前）为夜班
   （班次时间本身已含提前接单的容错，不再额外外扩）
-- 只有会话、没有分配记录的客服，按登录时刻投票兜底（同一套时段）
+- 「按客服汇总」页同口径：同一客服同一天若跨时段工作，会按班次分开统计
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class ShiftRules:
         return name.strip().lower() in self.night_names
 
     def vote(self, m: int) -> str:
-        """按一天内分钟数投票：白班 [day_s, day_e]；中班 (day_e, mid_last_e]；
+        """按一天内分钟数判定时段：白班 [day_s, day_e]；中班 (day_e, mid_last_e]；
         其余（深夜）为夜班。"""
         if m < self.day_s or m > self.mid_last_e:
             return "夜班"
@@ -86,43 +86,11 @@ class ShiftRules:
             return "白班"
         return "中班"
 
-
-def infer_agent_shifts(assignment_rows: list[dict[str, Any]],
-                       session_rows: list[dict[str, Any]],
-                       report_cfg: dict,
-                       tz_offset_hours: int) -> dict[str, str]:
-    """推断每个客服的班次，返回 {客服名: 白班/中班/夜班}。"""
-    rules = ShiftRules(report_cfg)
-    votes: dict[str, dict[str, int]] = {}
-    labels: dict[str, str] = {}
-
-    for r in assignment_rows:
-        name = r["agent_name"]
-        if rules.is_fixed_night(name):
-            labels[name] = "夜班"
-            continue
-        tod = _shift_tz(r["event_date_utc"], tz_offset_hours)
-        vote = rules.vote(tod.hour * 60 + tod.minute)
-        votes.setdefault(name, {"白班": 0, "中班": 0, "夜班": 0})[vote] += 1
-
-    for r in session_rows:  # 没有分配记录的客服，用登录时刻兜底投票
-        name = r["agent_name"]
-        if rules.is_fixed_night(name):
-            labels[name] = "夜班"
-            continue
-        if name in votes or name in labels:
-            continue
-        tod = _shift_tz(r["start_utc"], tz_offset_hours)
-        vote = rules.vote(tod.hour * 60 + tod.minute)
-        votes.setdefault(name, {"白班": 0, "中班": 0, "夜班": 0})[vote] += 1
-
-    for name, v in votes.items():
-        labels[name] = max(v, key=v.get)
-    for r in assignment_rows:
-        labels.setdefault(r["agent_name"], "白班")  # 无有效投票时默认白班
-    for r in session_rows:
-        labels.setdefault(r["agent_name"], "白班")
-    return labels
+    def row_shift(self, name: str, m: int) -> str:
+        """单条记录的班次：夜班名单固定为夜班，其余按时间落段。"""
+        if self.is_fixed_night(name):
+            return "夜班"
+        return self.vote(m)
 
 
 def _style_sheet(ws, widths: dict[str, float], autofilter: bool = False) -> None:
@@ -136,16 +104,20 @@ def _style_sheet(ws, widths: dict[str, float], autofilter: bool = False) -> None
         ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
 
 
-def _write_session_sheet(ws, rows: list[dict[str, Any]], shift_map: dict[str, str],
+def _write_session_sheet(ws, rows: list[dict[str, Any]], rules: ShiftRules,
                          tz_offset_hours: int) -> None:
-    """写一个上下线工作表：班次|客服|上线|下线|状态，按上线时间倒序。"""
+    """写一个上下线工作表：班次|客服|上线|下线|状态，按上线时间倒序。
+
+    班次按每条会话自己的上线时刻判定（夜班名单固定为夜班）。
+    """
     ws.append(SHEET2_HEADERS)
     for r in sorted(rows, key=lambda r: -r["start_utc"].timestamp()):
         ongoing = r["end_utc"] is None
+        start_local = _shift_tz(r["start_utc"], tz_offset_hours)
         ws.append([
-            shift_map.get(r["agent_name"], "白班"),
+            rules.row_shift(r["agent_name"], start_local.hour * 60 + start_local.minute),
             r["agent_name"],
-            _shift_tz(r["start_utc"], tz_offset_hours),
+            start_local,
             "进行中..." if ongoing else _shift_tz(r["end_utc"], tz_offset_hours),
             "🟢 在线中" if ongoing else "已下线",
         ])
@@ -174,21 +146,20 @@ def build_report_xlsx(
     """
     report_cfg = report_cfg or {}
     rules = ShiftRules(report_cfg)
-    shift_map = infer_agent_shifts(assignment_rows, session_rows, report_cfg,
-                                   tz_offset_hours)
 
     wb = Workbook()
 
-    # ---- Sheet1 分配数据（最原始排序：整体按时间倒序，仅增加班次列） ----
+    # ---- Sheet1 分配数据（整体时间倒序；班次逐行按记录时间判定） ----
     ws1 = wb.active
     ws1.title = SHEET1_NAME
     ws1.append(SHEET1_HEADERS)
     for r in sorted(assignment_rows,
                     key=lambda r: (-r["event_date_utc"].timestamp(), -r["id"])):
+        local = _shift_tz(r["event_date_utc"], tz_offset_hours)
         ws1.append([
-            _shift_tz(r["event_date_utc"], tz_offset_hours),
+            local,
             int(r["ticket_id"]) if str(r["ticket_id"]).isdigit() else r["ticket_id"],
-            shift_map.get(r["agent_name"], "白班"),
+            rules.row_shift(r["agent_name"], local.hour * 60 + local.minute),
             r["agent_name"],
             r["queue_name"],
             r["id"],
@@ -200,17 +171,17 @@ def build_report_xlsx(
     # ---- Sheet2 上下线数据拆两页：夜班 / 白中班（均按上线时间倒序） ----
     night_rows = [r for r in session_rows if rules.is_fixed_night(r["agent_name"])]
     other_rows = [r for r in session_rows if not rules.is_fixed_night(r["agent_name"])]
-    _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, shift_map,
+    _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, rules,
                          tz_offset_hours)
-    _write_session_sheet(wb.create_sheet(SHEET2D_NAME), other_rows, shift_map,
+    _write_session_sheet(wb.create_sheet(SHEET2D_NAME), other_rows, rules,
                          tz_offset_hours)
 
-    # ---- Sheet3 按客服汇总（每天每客服：去重工单数 + 记录数） ----
+    # ---- Sheet3 按客服汇总（每天每客服每班次：去重工单数 + 记录数） ----
     ws3 = wb.create_sheet(SHEET3_NAME)
     summary: dict[tuple, dict[str, set]] = {}
     for r in assignment_rows:
         local = _shift_tz(r["event_date_utc"], tz_offset_hours)
-        shift_label = shift_map.get(r["agent_name"], "白班")
+        shift_label = rules.row_shift(r["agent_name"], local.hour * 60 + local.minute)
         key = (local.strftime("%Y-%m-%d"), SHIFT_ORDER.get(shift_label, 0),
                shift_label, r["agent_name"])
         agg = summary.setdefault(key, {"tickets": set(), "count": 0})
