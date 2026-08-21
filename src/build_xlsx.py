@@ -9,12 +9,13 @@
 样式：全表 Arial 10、时间列 yyyy-mm-dd hh:mm:ss、冻结首行；
 明细页不按人分组（同一人的记录按时间与其他人自然穿插）。
 
-班次判定（夜班名单固定；其他人按独家时段投票，同一人在所有页签标注一致）：
+班次判定（夜班名单固定；其他人按分配时间投票，同一人在所有页签标注一致）：
 - 名单内（默认 Floria/Linna/Eva/Nancy）→ 永远夜班
-- 分配时间落在上午档（白班开始前 ~ 中班开始前）投白班，晚间档（白班结束后 ~
-  中班结束）投中班，深夜投夜班；13:30-17:30 白/中交叉时段不投票，票多者胜出
+- 白班 08:30-18:00（提前 tol 分钟内接单也算白班）；中班 19:00-23:00
+  （提前 tol 分钟内接单也算中班，18:00 收班到中班开始之间的零星分配归中班）；
+  其余时段（23:00 后 ~ 次日 08:10 前）投夜班；得票多者胜出
 - 只有会话、没有分配记录的客服，退化为按登录时刻投票（上午登录→白班，
-  午后/晚间登录→中班，凌晨登录→夜班）
+  晚间登录→中班，凌晨登录→夜班）
 """
 
 from __future__ import annotations
@@ -58,42 +59,39 @@ def _to_minutes(hhmm: str) -> int:
 
 
 class ShiftRules:
-    """从 config.report 解析班次时段，提供按「一天内分钟数」投票的判定。"""
+    """从 config.report 解析班次时段，提供按「一天内分钟数」投票的判定。
+
+    时段模型：白班 day=[开始,结束]；中班 mid=多段 [开始,结束]（当前仅 19:00-23:00）。
+    """
 
     def __init__(self, report_cfg: dict):
         self.night_names = {n.strip().lower() for n in report_cfg.get("night_shift_agents", [])}
-        tol = int(report_cfg.get("shift_early_minutes", 20))
+        self.tol = int(report_cfg.get("shift_early_minutes", 20))
         shifts = report_cfg.get("shifts", {})
         day = shifts.get("day", ["08:30", "18:00"])
-        mid = shifts.get("mid", [["13:30", "17:30"], ["19:00", "23:00"]])
         self.day_s = _to_minutes(day[0])
         self.day_e = _to_minutes(day[1])
-        self.mid1_s = _to_minutes(mid[0][0])
-        self.mid1_e = _to_minutes(mid[0][1])
-        self.mid2_e = _to_minutes(mid[1][1])
-        self.tol = tol
+        self.mid_periods = [(_to_minutes(s), _to_minutes(e))
+                            for s, e in shifts.get("mid", [["19:00", "23:00"]])]
+        self.mid_last_e = max((e for _, e in self.mid_periods), default=0)
 
     def is_fixed_night(self, name: str) -> bool:
         return name.strip().lower() in self.night_names
 
     def vote(self, m: int) -> str | None:
-        """按一天内分钟数投票；交叉时段返回 None（不投票）。"""
-        if m < self.day_s - self.tol or m > self.mid2_e:   # 深夜：夜班独家
+        """按一天内分钟数投票：白班 [day_s-tol, day_e]；中班 (day_e, mid_last_e]
+        （含提前 tol 分钟接单与收班后的零星分配）；其余为夜班。"""
+        if m < self.day_s - self.tol or m > self.mid_last_e:
             return "夜班"
-        if self.day_s - self.tol <= m < self.mid1_s - self.tol:  # 上午：白班独家
+        if m <= self.day_e:
             return "白班"
-        if self.mid1_e < m <= self.day_e:                  # 17:30-18:00 尾段：白班独家
-            return "白班"
-        if self.day_e < m <= self.mid2_e:                  # 晚间：中班独家
-            return "中班"
-        return None  # 约 13:10-17:30 白/中交叉，不投票
+        return "中班"
 
     def vote_login(self, m: int) -> str | None:
-        """按登录时刻投票（仅用于没有分配记录的客服兜底）：
-        上午登录→白班，午后/晚间登录→中班，凌晨登录→夜班。"""
+        """按登录时刻投票（仅用于没有分配记录的客服兜底）。"""
         if m < self.day_s - self.tol:
             return "夜班"
-        if m < self.mid1_s - self.tol:
+        if m <= self.day_e:
             return "白班"
         return "中班"
 
@@ -132,7 +130,7 @@ def infer_agent_shifts(assignment_rows: list[dict[str, Any]],
     for name, v in votes.items():
         labels[name] = max(v, key=v.get)
     for r in assignment_rows:
-        labels.setdefault(r["agent_name"], "白班")  # 全部落在交叉时段的默认白班
+        labels.setdefault(r["agent_name"], "白班")  # 无有效投票时默认白班
     for r in session_rows:
         labels.setdefault(r["agent_name"], "白班")
     return labels
