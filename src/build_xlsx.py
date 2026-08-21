@@ -30,8 +30,8 @@ from openpyxl.utils import get_column_letter
 DT_FORMAT = "yyyy\\-mm\\-dd\\ hh:mm:ss"
 BASE_FONT = Font(name="Arial", size=10)
 
-# 汇总页同一日期内的班次展示顺序：夜班 → 白班 → 中班
-SUMMARY_SHIFT_ORDER = {"夜班": 0, "白班": 1, "中班": 2}
+# 汇总页同一日期内的班次展示顺序：中班 → 白班 → 夜班
+SUMMARY_SHIFT_ORDER = {"中班": 0, "白班": 1, "夜班": 2}
 
 SHEET1_NAME = "分配数据"
 SHEET1_HEADERS = ["时间", "工单ID", "班次", "客服", "队列类型", "ID"]
@@ -189,7 +189,7 @@ def build_report_xlsx(
         agg["tickets"].add(str(r["ticket_id"]))
         agg["count"] += 1
     ws3.append(SHEET3_HEADERS)
-    # 日期倒序（最新在上）→ 班次 夜→白→中 → 工单量降序 → 客服名
+    # 日期倒序（最新在上）→ 班次 中→白→夜 → 工单量降序 → 客服名
     for key in sorted(summary, key=lambda k: (-int(k[0].replace("-", "")), k[1],
                                               -len(summary[k]["tickets"]), k[3])):
         date_str, _, shift_label, name = key
