@@ -80,7 +80,9 @@ def run(test: bool = False, dry_run: bool = False) -> int:
     xlsx_path = os.path.join(OUTPUT_DIR, xlsx_name)
     try:
         build_xlsx.build_report_xlsx(a_rows, s_rows, xlsx_path,
-                                     tz_offset_hours=tz_offset)
+                                     tz_offset_hours=tz_offset,
+                                     report_cfg=config["report"],
+                                     now_utc=now_utc)
     except Exception:
         log.exception("生成 XLSX 失败")
         return 4

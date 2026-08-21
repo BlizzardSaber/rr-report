@@ -24,6 +24,12 @@
   },
   "report": {
     "assignment_window_hours": 24,
-    "availability_days": 14
+    "availability_days": 14,
+    "night_shift_agents": ["Floria", "Linna", "Eva", "Nancy"],
+    "shifts": {
+      "day": ["08:30", "18:00"],
+      "mid": [["13:30", "17:30"], ["19:00", "23:00"]]
+    },
+    "shift_early_minutes": 20
   }
 }

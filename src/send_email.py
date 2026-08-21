@@ -128,7 +128,8 @@ def build_default_body(stats: dict, report_time: str,
         f"（当前在线 {stats['online_agents']} 人）",
         f"  · 数据累计范围    : 自 {stats['since_local']} 起（本地持续累积，不丢失）",
         "",
-        "表格包含两个工作表：近24小时分配数据 / agent上下线数据。",
+        "表格包含三个工作表：近24小时分配数据（按班次/客服分组，含每日每人汇总）"
+        " / agent上下线数据（含在线时长）/ 按客服汇总。",
         "",
         "—— RR数据机器人（自动发送，请勿直接回复）",
     ])
