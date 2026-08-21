@@ -30,7 +30,8 @@ from openpyxl.utils import get_column_letter
 DT_FORMAT = "yyyy\\-mm\\-dd\\ hh:mm:ss"
 BASE_FONT = Font(name="Arial", size=10)
 
-SHIFT_ORDER = {"白班": 0, "中班": 1, "夜班": 2}
+# 汇总页同一日期内的班次展示顺序：夜班 → 白班 → 中班
+SUMMARY_SHIFT_ORDER = {"夜班": 0, "白班": 1, "中班": 2}
 
 SHEET1_NAME = "分配数据"
 SHEET1_HEADERS = ["时间", "工单ID", "班次", "客服", "队列类型", "ID"]
@@ -182,7 +183,7 @@ def build_report_xlsx(
     for r in assignment_rows:
         local = _shift_tz(r["event_date_utc"], tz_offset_hours)
         shift_label = rules.row_shift(r["agent_name"], local.hour * 60 + local.minute)
-        key = (local.strftime("%Y-%m-%d"), SHIFT_ORDER.get(shift_label, 0),
+        key = (local.strftime("%Y-%m-%d"), SUMMARY_SHIFT_ORDER.get(shift_label, 0),
                shift_label, r["agent_name"])
         agg = summary.setdefault(key, {"tickets": set(), "count": 0})
         agg["tickets"].add(str(r["ticket_id"]))
