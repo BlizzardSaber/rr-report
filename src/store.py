@@ -144,8 +144,12 @@ def record_pull_run(now_utc: datetime, assignment_count: int,
 
 def query_assignment_since(window_hours: int,
                            now_utc: datetime) -> list[dict[str, Any]]:
-    """取窗口内的分配流水（含精确到秒的时间），按时间倒序。"""
-    since = _fmt(now_utc - timedelta(hours=window_hours))
+    """取窗口内的分配流水（时间为精确到秒的 UTC），按时间倒序。
+
+    window_hours=0 表示不过滤，返回全部累积数据。
+    """
+    since = (_fmt(now_utc - timedelta(hours=window_hours))
+             if window_hours > 0 else "0000-01-01 00:00:00")
     conn = _connect()
     try:
         cur = conn.execute(

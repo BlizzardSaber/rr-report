@@ -67,11 +67,12 @@ def run(test: bool = False, dry_run: bool = False) -> int:
         log.exception("拉取最新数据失败，改用本地累积数据继续生成报表")
         # 本地库里有历史累积，报表仍可生成，不直接失败
 
-    # 3. 从本地库取报表数据
+    # 3. 从本地库取报表数据（window=0 表示全部累积）
     a_rows = store.query_assignment_since(window_hours, now_utc)
     s_rows = store.query_sessions_since(avail_days, now_utc)
-    log.info("报表数据：分配 %d 条（近 %d 小时），会话 %d 条（近 %d 天）。",
-             len(a_rows), window_hours, len(s_rows), avail_days)
+    window_label = f"近 {window_hours} 小时" if window_hours > 0 else "全部累积"
+    log.info("报表数据：分配 %d 条（%s），会话 %d 条（近 %d 天）。",
+             len(a_rows), window_label, len(s_rows), avail_days)
 
     # 4. 生成 XLSX
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -96,6 +97,7 @@ def run(test: bool = False, dry_run: bool = False) -> int:
     # 6. 组装统计 + 发邮件
     db_stats = store.stats(now_utc)
     email_stats = {
+        "assignment_label": window_label,
         "assignment_count": len(a_rows),
         "ticket_count": len({r["ticket_id"] for r in a_rows}),
         "agent_count": len({r["agent_name"] for r in a_rows}),

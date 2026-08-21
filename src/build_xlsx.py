@@ -31,7 +31,7 @@ BASE_FONT = Font(name="Arial", size=10)
 
 SHIFT_ORDER = {"白班": 0, "中班": 1, "夜班": 2}
 
-SHEET1_NAME = "近24小时分配数据"
+SHEET1_NAME = "分配数据"
 SHEET1_HEADERS = ["时间", "工单ID", "班次", "客服", "队列类型", "ID"]
 SHEET1_WIDTHS = {"A": 19.14, "B": 8.57, "C": 8.0, "D": 10.0, "E": 22.0, "F": 17.5}
 
@@ -132,7 +132,7 @@ def build_report_xlsx(
 
     wb = Workbook()
 
-    # ---- Sheet1 近24小时分配数据（按 班次→客服 分组，组内时间倒序） ----
+    # ---- Sheet1 分配数据（按 班次→客服 分组，组内时间倒序，专员之间空一行） ----
     ws1 = wb.active
     ws1.title = SHEET1_NAME
     ordered = sorted(
@@ -143,7 +143,11 @@ def build_report_xlsx(
                        -r["id"]),
     )
     ws1.append(SHEET1_HEADERS)
+    prev_agent = None
     for r in ordered:
+        if prev_agent is not None and r["agent_name"] != prev_agent:
+            ws1.append([])  # 专员之间空一行
+        prev_agent = r["agent_name"]
         ws1.append([
             _shift(r["event_date_utc"], tz_offset_hours),
             int(r["ticket_id"]) if str(r["ticket_id"]).isdigit() else r["ticket_id"],
@@ -153,10 +157,11 @@ def build_report_xlsx(
             r["id"],
         ])
     for row in range(2, ws1.max_row + 1):
-        ws1.cell(row=row, column=1).number_format = DT_FORMAT
+        if ws1.cell(row=row, column=1).value is not None:
+            ws1.cell(row=row, column=1).number_format = DT_FORMAT
     _style_sheet(ws1, SHEET1_WIDTHS, autofilter=True)
 
-    # ---- Sheet2 agent上下线数据（按客服分组，组内上线时间倒序；在线时长分钟） ----
+    # ---- Sheet2 agent上下线数据（按客服分组，组内上线时间倒序；专员之间空一行） ----
     ws2 = wb.create_sheet(SHEET2_NAME)
     now_utc = now_utc or datetime.utcnow()
     sessions_ordered = sorted(
@@ -164,7 +169,11 @@ def build_report_xlsx(
         key=lambda r: (r["agent_name"], -r["start_utc"].timestamp()),
     )
     ws2.append(SHEET2_HEADERS)
+    prev_agent = None
     for r in sessions_ordered:
+        if prev_agent is not None and r["agent_name"] != prev_agent:
+            ws2.append([])  # 专员之间空一行
+        prev_agent = r["agent_name"]
         ongoing = r["end_utc"] is None
         end_for_calc = r["end_utc"] or now_utc
         ws2.append([
@@ -175,9 +184,10 @@ def build_report_xlsx(
             max(0, round((end_for_calc - r["start_utc"]).total_seconds() / 60)),
         ])
     for row in range(2, ws2.max_row + 1):
-        ws2.cell(row=row, column=2).number_format = DT_FORMAT
-        if not isinstance(ws2.cell(row=row, column=3).value, str):
-            ws2.cell(row=row, column=3).number_format = DT_FORMAT
+        if ws2.cell(row=row, column=2).value is not None:
+            ws2.cell(row=row, column=2).number_format = DT_FORMAT
+            if not isinstance(ws2.cell(row=row, column=3).value, str):
+                ws2.cell(row=row, column=3).number_format = DT_FORMAT
     _style_sheet(ws2, SHEET2_WIDTHS)
 
     # ---- Sheet3 按客服汇总（每天每客服：去重工单数 + 记录数） ----

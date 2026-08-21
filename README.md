@@ -156,7 +156,7 @@ rr-report/
   "recipients": ["a@example.com", "b@example.com"],
   "schedule": { "pull_interval_minutes": 30, "push_times": ["09:00"] },
   "report": {
-    "assignment_window_hours": 24,
+    "assignment_window_hours": 0,
     "availability_days": 14,
     "night_shift_agents": ["Floria", "Linna", "Eva", "Nancy"],
     "shifts": { "day": ["08:30", "18:00"], "mid": [["13:30", "17:30"], ["19:00", "23:00"]] },
@@ -166,7 +166,8 @@ rr-report/
 ```
 
 通常不需要手改，用 `./manage.sh` 即可。`report` 各项说明：
-- `assignment_window_hours` / `availability_days`：报表取数窗口（与原表口径一致）
+- `assignment_window_hours`：分配明细取数窗口（小时），`0` = 全部累积数据（默认）；
+  `availability_days`：上下线明细保留天数
 - `night_shift_agents`：永远是夜班的客服名单
 - `shifts`：白班/中班时段（UTC+8），用于自动推断非名单客服的班次
 - `shift_early_minutes`：负责人提前接单的容差分钟数（判定时段边界外扩）
@@ -180,7 +181,7 @@ rr-report/
 
 ## ❓ FAQ
 
-**Q: 报表里「近24小时分配数据」为什么有时比接口单次返回的还多？**
+**Q: 报表里「分配数据」为什么有时比接口单次返回的还多？**
 A: 本地库累积了持续轮询的数据，按报表时刻往前推 24 小时取数，接口偶发漏数或请求失败也不影响完整性。
 
 **Q: 邮件进了垃圾箱？**

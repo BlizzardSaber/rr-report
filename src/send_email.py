@@ -122,13 +122,13 @@ def build_default_body(stats: dict, report_time: str,
         "",
         "这是 RR 客服分配系统的定时数据报表，详见附件 XLSX 表格：",
         f"  · 报表时间        : {report_time} (UTC+8)",
-        f"  · 近24小时分配记录: {stats['assignment_count']} 条"
+        f"  · 分配记录        : {stats['assignment_count']} 条 [{stats.get('assignment_label', '')}]"
         f"（涉及工单 {stats['ticket_count']} 个 / 客服 {stats['agent_count']} 人）",
         f"  · 客服上下线记录  : {stats['session_count']} 条"
         f"（当前在线 {stats['online_agents']} 人）",
         f"  · 数据累计范围    : 自 {stats['since_local']} 起（本地持续累积，不丢失）",
         "",
-        "表格包含三个工作表：近24小时分配数据（按班次/客服分组，含每日每人汇总）"
+        "表格包含三个工作表：分配数据（按班次/客服分组，专员间空行分隔，含每日每人汇总）"
         " / agent上下线数据（含在线时长）/ 按客服汇总。",
         "",
         "—— RR数据机器人（自动发送，请勿直接回复）",

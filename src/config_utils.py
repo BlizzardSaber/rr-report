@@ -41,7 +41,7 @@ DEFAULTS: dict[str, Any] = {
         "push_times": ["09:00"],
     },
     "report": {
-        "assignment_window_hours": 24,
+        "assignment_window_hours": 0,  # 分配明细取数窗口（小时）；0 = 全部累积数据
         "availability_days": 14,
         "night_shift_agents": ["Floria", "Linna", "Eva", "Nancy"],
         "shifts": {
