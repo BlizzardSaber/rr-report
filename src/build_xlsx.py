@@ -107,12 +107,19 @@ def _style_sheet(ws, widths: dict[str, float], autofilter: bool = False) -> None
 
 def _write_session_sheet(ws, rows: list[dict[str, Any]], rules: ShiftRules,
                          tz_offset_hours: int) -> None:
-    """写一个上下线工作表：班次|客服|上线|下线|状态，按上线时间倒序。
+    """写一个上下线工作表：班次|客服|上线|下线|状态。
 
-    班次按每条会话自己的上线时刻判定（夜班名单固定为夜班）。
+    排序：上线日期倒序（最新日期最上）→ 同日期内客服姓名按字母表 →
+    同人内上线时间倒序。班次按每条会话自己的上线时刻判定（夜班名单固定为夜班）。
     """
+
+    def sort_key(r: dict[str, Any]):
+        local = _shift_tz(r["start_utc"], tz_offset_hours)
+        return (-int(local.strftime("%Y%m%d")), r["agent_name"].lower(),
+                -r["start_utc"].timestamp())
+
     ws.append(SHEET2_HEADERS)
-    for r in sorted(rows, key=lambda r: -r["start_utc"].timestamp()):
+    for r in sorted(rows, key=sort_key):
         ongoing = r["end_utc"] is None
         start_local = _shift_tz(r["start_utc"], tz_offset_hours)
         ws.append([
