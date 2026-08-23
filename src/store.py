@@ -169,8 +169,12 @@ def query_assignment_since(window_hours: int,
 
 
 def query_sessions_since(days: int, now_utc: datetime) -> list[dict[str, Any]]:
-    """取窗口内的上下线会话，按上线时间倒序。"""
-    since = _fmt(now_utc - timedelta(days=days))
+    """取窗口内的上下线会话，按上线时间倒序。
+
+    days=0 表示不过滤，返回全部累积数据。
+    """
+    since = (_fmt(now_utc - timedelta(days=days))
+             if days > 0 else "0000-01-01 00:00:00")
     conn = _connect()
     try:
         cur = conn.execute(

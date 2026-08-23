@@ -71,8 +71,9 @@ def run(test: bool = False, dry_run: bool = False) -> int:
     a_rows = store.query_assignment_since(window_hours, now_utc)
     s_rows = store.query_sessions_since(avail_days, now_utc)
     window_label = f"近 {window_hours} 小时" if window_hours > 0 else "全部累积"
-    log.info("报表数据：分配 %d 条（%s），会话 %d 条（近 %d 天）。",
-             len(a_rows), window_label, len(s_rows), avail_days)
+    avail_label = f"近 {avail_days} 天" if avail_days > 0 else "全部累积"
+    log.info("报表数据：分配 %d 条（%s），会话 %d 条（%s）。",
+             len(a_rows), window_label, len(s_rows), avail_label)
 
     # 4. 生成 XLSX
     os.makedirs(OUTPUT_DIR, exist_ok=True)
