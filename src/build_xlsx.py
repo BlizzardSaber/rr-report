@@ -12,9 +12,11 @@
 班次判定（按「人 + 日期」逐天判定，班次随排班变动、不参考其他天的历史）：
 - 每人每天的证据只有当天的登录 + 分配行为：上午（12:00 前）有活动 →
   当天白班（证据优先）；无上午活动但晚间（18:00 后）有活动 → 当天中班
-  （中班 14:00-18:00、20:00-23:00，必然参与晚间时段）；只有下午活动 →
-  当天白班（白班临时支援下午分配的场景）；夜班名单固定夜班——
-  非名单的人永远不判夜班
+  （中班 14:00-18:00、20:00-23:00，必然参与晚间时段）；只有下午活动时，
+  踩中班上班点（14:00 前后 10 分钟内）开始的判中班（当天未结束、晚间
+  证据尚未产生），更晚才出现的判白班（临时支援）；夜班名单固定夜班——
+  非名单的人永远不判夜班。报表每次从全量数据重新生成，晚间数据到来后
+  当天判定自动修正
 - 分配数据 / 按客服汇总 / 上下线两页统一使用该「人+日期」班次
 """
 
@@ -101,13 +103,18 @@ class ShiftRules:
         - 上午（12:00 前）有活动 → 当天白班（证据优先）；
         - 当天无上午活动、但晚间（18:00 后）有活动 → 当天中班
           （中班 14:00-18:00、20:00-23:00，必然参与晚间时段）；
-        - 当天只有下午（12:00-18:00）活动 → 当天白班（白班临时支援
-          下午分配、不参与晚间中班时段的场景）；
+        - 只有下午（12:00-18:00）活动：
+          · 首次活动踩着中班上班点（中班开始后 10 分钟内，含提前登录，
+            如 13:49）→ 当天中班（当天未结束、晚间证据尚未产生的场景）；
+          · 更晚才出现（如下午中途被拉来支援）→ 当天白班。
+          报表每次都从全量数据重新生成，当晚间数据到来后判定自动修正；
         - 夜班名单固定夜班——非名单的人永远不判夜班。
         """
         NOON = 12 * 60
+        mid1_s = self.mid_periods[0][0] if self.mid_periods else 14 * 60
         morning: set[tuple[str, str]] = set()
         evening: set[tuple[str, str]] = set()
+        first_m: dict[tuple[str, str], int] = {}
         seen: set[tuple[str, str]] = set()
         labels: dict[tuple[str, str], str] = {}
 
@@ -121,6 +128,8 @@ class ShiftRules:
                 morning.add(key)
             elif m > self.day_e:
                 evening.add(key)
+            if key not in first_m or m < first_m[key]:
+                first_m[key] = m
 
         for r in session_rows:
             collect(r["agent_name"], _shift_tz(r["start_utc"], tz_offset_hours))
@@ -135,8 +144,10 @@ class ShiftRules:
                 labels[key] = "白班"
             elif key in evening:
                 labels[key] = "中班"
+            elif first_m.get(key, NOON) <= mid1_s + 10:
+                labels[key] = "中班"  # 踩中班上班点开始 → 当天是中班
             else:
-                labels[key] = "白班"  # 仅下午活动 → 白班
+                labels[key] = "白班"  # 下午中途才出现 → 白班临时支援
         return labels
 
 
