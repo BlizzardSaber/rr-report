@@ -126,12 +126,12 @@ def build_default_body(stats: dict, report_time: str,
         f"（涉及工单 {stats['ticket_count']} 个 / 客服 {stats['agent_count']} 人）",
         f"  · 客服上下线记录  : {stats['session_count']} 条"
         f"（当前在线 {stats['online_agents']} 人）",
-        f"  · 数据累计范围    : 自 {stats['since_local']} 起（本地持续累积，不丢失）",
+        f"  · 数据累计范围    : 自 {stats['since_local']} 起（本地持续累积）",
         "",
         "表格包含四个工作表：分配数据（含班次列，按时间倒序）"
         " / agent上下线数据-夜班 / agent上下线数据-白中班 / 按客服汇总。",
         "",
-        "—— RR数据机器人（自动发送，请勿直接回复）",
+        "—— RR数据机器人（自动发送）",
     ])
     if is_test:
         body = "【这是一封测试邮件，用于验证邮件配置是否正确】\n\n" + body

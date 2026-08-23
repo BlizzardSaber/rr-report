@@ -159,8 +159,8 @@ rr-report/
   "report": {
     "assignment_window_hours": 0,
     "availability_days": 14,
-    "night_shift_agents": ["Floria", "Linna", "Eva", "Nancy"],
-    "shifts": { "day": ["08:30", "18:00"], "mid": [["19:00", "23:00"]] }
+    "night_shift_agents": [],
+    "shifts": { "day": ["08:30", "18:00"], "mid": [["14:00", "18:00"], ["20:00", "23:00"]] }
   }
 }
 ```
