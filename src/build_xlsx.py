@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any
@@ -96,22 +97,25 @@ class ShiftRules:
 
     def per_day_shifts(self, assignment_rows: list[dict[str, Any]],
                        session_rows: list[dict[str, Any]],
-                       tz_offset_hours: int) -> dict[tuple[str, str], str]:
+                       tz_offset_hours: int,
+                       schedule: dict[str, dict[str, str]] | None = None
+                       ) -> dict[tuple[str, str], str]:
         """按「人 + 日期」逐天判定班次（班次随排班变动，不跨天累计历史）。
 
-        返回 {(客服名, 日期str): 班次}。每天的证据只有当天的登录 + 分配：
-        - 上午（12:00 前）有活动 → 当天白班（证据优先）；
-        - 当天无上午活动、但晚间（18:00 后）有活动 → 当天中班
-          （中班 14:00-18:00、20:00-23:00，必然参与晚间时段）；
-        - 只有下午（12:00-18:00）活动：
-          · 首次活动踩着中班上班点（中班开始后 10 分钟内，含提前登录，
-            如 13:49）→ 当天中班（当天未结束、晚间证据尚未产生的场景）；
-          · 更晚才出现（如下午中途被拉来支援）→ 当天白班。
-          报表每次都从全量数据重新生成，当晚间数据到来后判定自动修正；
-        - 夜班名单固定夜班——非名单的人永远不判夜班。
+        判定优先级：
+        1. 夜班名单 → 永远夜班（夜班固定，不依赖班表）；
+        2. 班表命中（该人该日有「中」/「班」标记）→ 按班表；
+           班表标「夜」的非名单人员忽略，继续走行为逻辑；
+        3. 行为逻辑（当天登录 + 分配）：上午（12:00 前）有活动 → 白班
+           （证据优先）；无上午但晚间（18:00 后）有活动 → 中班；仅下午
+           活动时，踩中班上班点（中班开始后 10 分钟内，如 13:49）判中班，
+           更晚出现判白班（临时支援）。报表每次从全量数据重新生成，
+           晚间数据到来后当天判定自动修正。
+        班表按日期粒度生效：没有该日期的月份自动整体回退行为逻辑。
         """
         NOON = 12 * 60
         mid1_s = self.mid_periods[0][0] if self.mid_periods else 14 * 60
+        schedule = schedule or {}
         morning: set[tuple[str, str]] = set()
         evening: set[tuple[str, str]] = set()
         first_m: dict[tuple[str, str], int] = {}
@@ -136,10 +140,15 @@ class ShiftRules:
         for r in assignment_rows:
             collect(r["agent_name"], _shift_tz(r["event_date_utc"], tz_offset_hours))
 
+        from schedule import lookup
         for key in seen:
-            name = key[0]
+            name, date_str = key
             if self.is_fixed_night(name):
                 labels[key] = "夜班"
+                continue
+            scheduled = lookup(schedule, name, date_str)
+            if scheduled in ("白班", "中班"):
+                labels[key] = scheduled
             elif key in morning:
                 labels[key] = "白班"
             elif key in evening:
@@ -212,9 +221,27 @@ def build_report_xlsx(
     """
     report_cfg = report_cfg or {}
     rules = ShiftRules(report_cfg)
-    # 全表统一：班次按「人 + 日期」逐天判定（当天登录/分配行为决定，不看历史），
+
+    # 班表兜底：存在则按 (人, 日期) 查班次；文件缺失/无该日期自动回退行为逻辑
+    import schedule as schedule_mod
+    schedule_map: dict[str, dict[str, str]] = {}
+    schedule_path = report_cfg.get("schedule_file") or "客户专家班表.xlsx"
+    if not os.path.isabs(schedule_path):
+        schedule_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            schedule_path)
+    if os.path.exists(schedule_path):
+        try:
+            schedule_map = schedule_mod.load_schedule(schedule_path)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("rr.build").warning("班表解析失败，回退行为逻辑: %s", e)
+    else:
+        logging.getLogger("rr.build").info("未找到班表文件 %s，按行为逻辑判定", schedule_path)
+
+    # 全表统一：班次按「人 + 日期」逐天判定（夜班名单 > 班表 > 行为逻辑），
     # 分配明细 / 按客服汇总 / 上下线两页共用
-    day_shifts = rules.per_day_shifts(assignment_rows, session_rows, tz_offset_hours)
+    day_shifts = rules.per_day_shifts(assignment_rows, session_rows,
+                                      tz_offset_hours, schedule_map)
 
     def row_shift(name: str, local) -> str:
         """该客服在 local 当天的班次；无记录时退回按时间落段。"""

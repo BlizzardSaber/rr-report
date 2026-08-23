@@ -25,6 +25,7 @@
   "report": {
     "assignment_window_hours": 0,
     "availability_days": 14,
+    "schedule_file": "客户专家班表.xlsx",
     "night_shift_agents": [],
     "shifts": {
       "day": ["08:30", "18:00"],

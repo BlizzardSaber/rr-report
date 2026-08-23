@@ -43,6 +43,7 @@ DEFAULTS: dict[str, Any] = {
     "report": {
         "assignment_window_hours": 0,  # 分配明细取数窗口（小时）；0 = 全部累积数据
         "availability_days": 14,
+        "schedule_file": "客户专家班表.xlsx",  # 班表兜底；缺失或无该日期时回退行为逻辑
         "night_shift_agents": [],
         "shifts": {
             "day": ["08:30", "18:00"],

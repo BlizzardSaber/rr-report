@@ -9,6 +9,9 @@ output/*
 # 敏感配置（含 API key 与邮箱授权码）
 config/config.json
 
+# 班表（含真实人员姓名，勿上传仓库）
+客户专家班表.xlsx
+
 # 本地环境
 .venv/
 __pycache__/
