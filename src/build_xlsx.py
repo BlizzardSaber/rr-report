@@ -9,13 +9,13 @@
 样式：全表 Arial 10、时间列 yyyy-mm-dd hh:mm:ss、冻结首行；
 明细页不按人分组（同一人的记录按时间与其他人自然穿插）。
 
-班次判定（全表统一按「人」判定，与上下线页一致）：
-- 每个客服的整体班次由其登录模式推断：上午（12:00 前）登录过 → 白班人员；
-  只在午后/晚间登录 → 中班人员（中班 14:00-18:00、20:00-23:00，会提前
-  几分钟登录，如 13:54）；夜班名单固定夜班——非名单的人永远不判夜班
-- 分配数据 / 按客服汇总 / 上下线两页均使用该人的整体班次；
-  仅当某人只有分配记录、完全没有登录记录时，才退回按记录时间落段
-  （<=18:00 白班 / >18:00 中班）
+班次判定（按「人 + 日期」逐天判定，班次随排班变动、不参考其他天的历史）：
+- 每人每天的证据只有当天的登录 + 分配行为：上午（12:00 前）有活动 →
+  当天白班（证据优先）；无上午活动但晚间（18:00 后）有活动 → 当天中班
+  （中班 14:00-18:00、20:00-23:00，必然参与晚间时段）；只有下午活动 →
+  当天白班（白班临时支援下午分配的场景）；夜班名单固定夜班——
+  非名单的人永远不判夜班
+- 分配数据 / 按客服汇总 / 上下线两页统一使用该「人+日期」班次
 """
 
 from __future__ import annotations
@@ -92,51 +92,51 @@ class ShiftRules:
             return "夜班"
         return self.vote(m)
 
-    def person_shifts(self, assignment_rows: list[dict[str, Any]],
-                      session_rows: list[dict[str, Any]],
-                      tz_offset_hours: int) -> dict[str, str]:
-        """按「人」判定整体班次（同一人在所有页签统一标注）。
+    def per_day_shifts(self, assignment_rows: list[dict[str, Any]],
+                       session_rows: list[dict[str, Any]],
+                       tz_offset_hours: int) -> dict[tuple[str, str], str]:
+        """按「人 + 日期」逐天判定班次（班次随排班变动，不跨天累计历史）。
 
-        证据来源为该人全部登录时刻 + 全部分配时刻（跨整个报表窗口）：
-        - 上午（12:00 前）有过登录或分配 → 白班人员（证据优先）；
-        - 无上午活动、但晚间（18:00 后）有登录或分配 → 中班人员
+        返回 {(客服名, 日期str): 班次}。每天的证据只有当天的登录 + 分配：
+        - 上午（12:00 前）有活动 → 当天白班（证据优先）；
+        - 当天无上午活动、但晚间（18:00 后）有活动 → 当天中班
           （中班 14:00-18:00、20:00-23:00，必然参与晚间时段）；
-        - 只有下午（12:00-18:00）活动 → 白班人员（覆盖白班人员
-          临时支援下午分配、但不参与晚间中班时段的场景）；
-        - 夜班名单固定夜班——非名单的人永远不会被判成夜班。
+        - 当天只有下午（12:00-18:00）活动 → 当天白班（白班临时支援
+          下午分配、不参与晚间中班时段的场景）；
+        - 夜班名单固定夜班——非名单的人永远不判夜班。
         """
         NOON = 12 * 60
-        morning: set[str] = set()
-        evening: set[str] = set()
-        labels: dict[str, str] = {}
+        morning: set[tuple[str, str]] = set()
+        evening: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str]] = set()
+        labels: dict[tuple[str, str], str] = {}
 
-        def collect(name: str, m: int) -> None:
+        def collect(name: str, local) -> None:
+            key = (name, local.strftime("%Y-%m-%d"))
+            seen.add(key)
+            if self.is_fixed_night(name):
+                return
+            m = local.hour * 60 + local.minute
             if m < NOON:
-                morning.add(name)
+                morning.add(key)
             elif m > self.day_e:
-                evening.add(name)
+                evening.add(key)
 
         for r in session_rows:
-            name = r["agent_name"]
-            if self.is_fixed_night(name):
-                labels[name] = "夜班"
-                continue
-            local = _shift_tz(r["start_utc"], tz_offset_hours)
-            collect(name, local.hour * 60 + local.minute)
+            collect(r["agent_name"], _shift_tz(r["start_utc"], tz_offset_hours))
         for r in assignment_rows:
-            name = r["agent_name"]
-            if self.is_fixed_night(name):
-                labels[name] = "夜班"
-                continue
-            local = _shift_tz(r["event_date_utc"], tz_offset_hours)
-            collect(name, local.hour * 60 + local.minute)
+            collect(r["agent_name"], _shift_tz(r["event_date_utc"], tz_offset_hours))
 
-        for name in evening - morning:
-            labels[name] = "中班"
-        for name in morning:
-            labels[name] = "白班"
-        for r in list(session_rows) + list(assignment_rows):
-            labels.setdefault(r["agent_name"], "白班")  # 仅下午活动 → 白班
+        for key in seen:
+            name = key[0]
+            if self.is_fixed_night(name):
+                labels[key] = "夜班"
+            elif key in morning:
+                labels[key] = "白班"
+            elif key in evening:
+                labels[key] = "中班"
+            else:
+                labels[key] = "白班"  # 仅下午活动 → 白班
         return labels
 
 
@@ -152,12 +152,12 @@ def _style_sheet(ws, widths: dict[str, float], autofilter: bool = False) -> None
 
 
 def _write_session_sheet(ws, rows: list[dict[str, Any]],
-                         shift_map: dict[str, str],
+                         day_shifts: dict[tuple[str, str], str],
                          tz_offset_hours: int) -> None:
     """写一个上下线工作表：班次|客服|上线|下线|状态。
 
     排序：上线日期倒序（最新日期最上）→ 同日期内客服姓名按字母表 →
-    同人内上线时间倒序。班次为该客服的整体班次（见 ShiftRules.person_shifts）。
+    同人内上线时间倒序。班次为该客服在登录当天的班次（per_day_shifts）。
     """
 
     def sort_key(r: dict[str, Any]):
@@ -168,10 +168,11 @@ def _write_session_sheet(ws, rows: list[dict[str, Any]],
     ws.append(SHEET2_HEADERS)
     for r in sorted(rows, key=sort_key):
         ongoing = r["end_utc"] is None
+        start_local = _shift_tz(r["start_utc"], tz_offset_hours)
         ws.append([
-            shift_map.get(r["agent_name"], "白班"),
+            day_shifts.get((r["agent_name"], start_local.strftime("%Y-%m-%d")), "白班"),
             r["agent_name"],
-            _shift_tz(r["start_utc"], tz_offset_hours),
+            start_local,
             "进行中..." if ongoing else _shift_tz(r["end_utc"], tz_offset_hours),
             "🟢 在线中" if ongoing else "已下线",
         ])
@@ -200,19 +201,20 @@ def build_report_xlsx(
     """
     report_cfg = report_cfg or {}
     rules = ShiftRules(report_cfg)
-    # 全表统一：每个人一个整体班次（按登录+分配的活动时段推断），全部分配/汇总/上下线页共用
-    session_shift_map = rules.person_shifts(assignment_rows, session_rows,
-                                            tz_offset_hours)
+    # 全表统一：班次按「人 + 日期」逐天判定（当天登录/分配行为决定，不看历史），
+    # 分配明细 / 按客服汇总 / 上下线两页共用
+    day_shifts = rules.per_day_shifts(assignment_rows, session_rows, tz_offset_hours)
 
-    def row_shift(name: str, m: int) -> str:
-        """优先用该人的整体班次；无登录记录的客服退回按时间落段。"""
-        if name in session_shift_map:
-            return session_shift_map[name]
-        return rules.row_shift(name, m)
+    def row_shift(name: str, local) -> str:
+        """该客服在 local 当天的班次；无记录时退回按时间落段。"""
+        label = day_shifts.get((name, local.strftime("%Y-%m-%d")))
+        if label:
+            return label
+        return rules.row_shift(name, local.hour * 60 + local.minute)
 
     wb = Workbook()
 
-    # ---- Sheet1 分配数据（整体时间倒序；班次为该客服的整体班次） ----
+    # ---- Sheet1 分配数据（整体时间倒序；班次为该客服当天的班次） ----
     ws1 = wb.active
     ws1.title = SHEET1_NAME
     ws1.append(SHEET1_HEADERS)
@@ -222,7 +224,7 @@ def build_report_xlsx(
         ws1.append([
             local,
             int(r["ticket_id"]) if str(r["ticket_id"]).isdigit() else r["ticket_id"],
-            row_shift(r["agent_name"], local.hour * 60 + local.minute),
+            row_shift(r["agent_name"], local),
             r["agent_name"],
             r["queue_name"],
             r["id"],
@@ -234,9 +236,9 @@ def build_report_xlsx(
     # ---- Sheet2 上下线数据拆两页：夜班 / 白中班（均按上线时间倒序） ----
     night_rows = [r for r in session_rows if rules.is_fixed_night(r["agent_name"])]
     other_rows = [r for r in session_rows if not rules.is_fixed_night(r["agent_name"])]
-    _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, session_shift_map,
+    _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, day_shifts,
                          tz_offset_hours)
-    _write_session_sheet(wb.create_sheet(SHEET2D_NAME), other_rows, session_shift_map,
+    _write_session_sheet(wb.create_sheet(SHEET2D_NAME), other_rows, day_shifts,
                          tz_offset_hours)
 
     # ---- Sheet3 按客服汇总（每天每客服每班次：去重工单数 + 记录数） ----
@@ -244,7 +246,7 @@ def build_report_xlsx(
     summary: dict[tuple, dict[str, set]] = {}
     for r in assignment_rows:
         local = _shift_tz(r["event_date_utc"], tz_offset_hours)
-        shift_label = row_shift(r["agent_name"], local.hour * 60 + local.minute)
+        shift_label = row_shift(r["agent_name"], local)
         key = (local.strftime("%Y-%m-%d"), SUMMARY_SHIFT_ORDER.get(shift_label, 0),
                shift_label, r["agent_name"])
         agg = summary.setdefault(key, {"tickets": set(), "count": 0})
