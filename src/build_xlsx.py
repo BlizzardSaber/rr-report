@@ -9,12 +9,13 @@
 样式：全表 Arial 10、时间列 yyyy-mm-dd hh:mm:ss、冻结首行；
 明细页不按人分组（同一人的记录按时间与其他人自然穿插）。
 
-班次判定（逐行按记录时间落段，夜班名单固定）：
-- 名单内（默认 Floria/Linna/Eva/Nancy）→ 永远夜班（无论时间）
-- 其他客服按该条记录自己的时间判定：白班 08:30-18:00、中班 19:00-23:00
-  （收班后 18:00-23:00 的分配归中班），其余时段（23:00 后 ~ 次日 08:30 前）为夜班
-  （班次时间本身已含提前接单的容错，不再额外外扩）
-- 「按客服汇总」页同口径：同一客服同一天若跨时段工作，会按班次分开统计
+班次判定：
+- 分配数据 / 按客服汇总：逐行按记录时间落段——白班时段 08:30-18:00、
+  中班时段（收班后）18:00-23:00、其余深夜为夜班；夜班名单内的人永远夜班
+- 上下线两页：按「人」判定（同一个人的会话统一标注）——
+  上午（12:00 前）登录过的视为白班人员；只在午后/晚间（12:00-23:00）
+  登录的视为中班人员（中班 14:00-18:00、20:00-23:00，会提前几分钟到
+  十几分钟登录，如 13:54）；只出现在深夜的为夜班；名单内固定夜班
 """
 
 from __future__ import annotations
@@ -88,10 +89,46 @@ class ShiftRules:
         return "中班"
 
     def row_shift(self, name: str, m: int) -> str:
-        """单条记录的班次：夜班名单固定为夜班，其余按时间落段。"""
+        """单条分配记录的班次：夜班名单固定为夜班，其余按时间落段。"""
         if self.is_fixed_night(name):
             return "夜班"
         return self.vote(m)
+
+    def session_shifts(self, session_rows: list[dict[str, Any]],
+                       tz_offset_hours: int) -> dict[str, str]:
+        """按「人」判定上下线会话的班次（同一人统一标注）。
+
+        判定依据是其全部登录时刻：上午（12:00 前）登录过 → 白班人员；
+        只在午后/晚间（12:00-中班结束）登录 → 中班人员（中班 14:00-18:00、
+        20:00-23:00，会提前几分钟登录，如 13:54）；只出现在深夜 → 夜班。
+        夜班名单固定为夜班。上午登录的证据优先（白班人员午休后重新上线
+        也在午后，不应误判为中班）。
+        """
+        NOON = 12 * 60
+        morning: set[str] = set()
+        afternoon: set[str] = set()
+        night_only: set[str] = set()
+        labels: dict[str, str] = {}
+        for r in session_rows:
+            name = r["agent_name"]
+            if self.is_fixed_night(name):
+                labels[name] = "夜班"
+                continue
+            local = _shift_tz(r["start_utc"], tz_offset_hours)
+            m = local.hour * 60 + local.minute
+            if self.day_s <= m < NOON:
+                morning.add(name)
+            elif NOON <= m <= self.mid_last_e:
+                afternoon.add(name)
+            else:
+                night_only.add(name)
+        for name in afternoon - morning:
+            labels[name] = "中班"
+        for name in morning:
+            labels[name] = "白班"
+        for name in night_only - morning - afternoon:
+            labels[name] = "夜班"
+        return labels
 
 
 def _style_sheet(ws, widths: dict[str, float], autofilter: bool = False) -> None:
@@ -105,12 +142,13 @@ def _style_sheet(ws, widths: dict[str, float], autofilter: bool = False) -> None
         ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
 
 
-def _write_session_sheet(ws, rows: list[dict[str, Any]], rules: ShiftRules,
+def _write_session_sheet(ws, rows: list[dict[str, Any]],
+                         shift_map: dict[str, str],
                          tz_offset_hours: int) -> None:
     """写一个上下线工作表：班次|客服|上线|下线|状态。
 
     排序：上线日期倒序（最新日期最上）→ 同日期内客服姓名按字母表 →
-    同人内上线时间倒序。班次按每条会话自己的上线时刻判定（夜班名单固定为夜班）。
+    同人内上线时间倒序。班次为该客服的整体班次（见 ShiftRules.session_shifts）。
     """
 
     def sort_key(r: dict[str, Any]):
@@ -121,11 +159,10 @@ def _write_session_sheet(ws, rows: list[dict[str, Any]], rules: ShiftRules,
     ws.append(SHEET2_HEADERS)
     for r in sorted(rows, key=sort_key):
         ongoing = r["end_utc"] is None
-        start_local = _shift_tz(r["start_utc"], tz_offset_hours)
         ws.append([
-            rules.row_shift(r["agent_name"], start_local.hour * 60 + start_local.minute),
+            shift_map.get(r["agent_name"], "白班"),
             r["agent_name"],
-            start_local,
+            _shift_tz(r["start_utc"], tz_offset_hours),
             "进行中..." if ongoing else _shift_tz(r["end_utc"], tz_offset_hours),
             "🟢 在线中" if ongoing else "已下线",
         ])
@@ -177,11 +214,12 @@ def build_report_xlsx(
     _style_sheet(ws1, SHEET1_WIDTHS, autofilter=True)
 
     # ---- Sheet2 上下线数据拆两页：夜班 / 白中班（均按上线时间倒序） ----
+    session_shift_map = rules.session_shifts(session_rows, tz_offset_hours)
     night_rows = [r for r in session_rows if rules.is_fixed_night(r["agent_name"])]
     other_rows = [r for r in session_rows if not rules.is_fixed_night(r["agent_name"])]
-    _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, rules,
+    _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, session_shift_map,
                          tz_offset_hours)
-    _write_session_sheet(wb.create_sheet(SHEET2D_NAME), other_rows, rules,
+    _write_session_sheet(wb.create_sheet(SHEET2D_NAME), other_rows, session_shift_map,
                          tz_offset_hours)
 
     # ---- Sheet3 按客服汇总（每天每客服每班次：去重工单数 + 记录数） ----
