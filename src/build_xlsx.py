@@ -9,13 +9,12 @@
 样式：全表 Arial 10、时间列 yyyy-mm-dd hh:mm:ss、冻结首行；
 明细页不按人分组（同一人的记录按时间与其他人自然穿插）。
 
-班次判定：
-- 分配数据 / 按客服汇总：逐行按记录时间落段——白班时段 08:30-18:00、
-  中班时段（收班后）18:00-23:00、其余深夜为夜班；夜班名单内的人永远夜班
+班次判定（夜班专属固定名单，其余人只会被判白班或中班）：
+- 分配数据 / 按客服汇总：逐行按记录时间落段——白班时段 08:30-18:00（含
+  更早的提前接单），收班后 18:00 起为中班；夜班名单内的人永远夜班
 - 上下线两页：按「人」判定（同一个人的会话统一标注）——
-  上午（12:00 前）登录过的视为白班人员；只在午后/晚间（12:00-23:00）
-  登录的视为中班人员（中班 14:00-18:00、20:00-23:00，会提前几分钟到
-  十几分钟登录，如 13:54）；只出现在深夜的为夜班；名单内固定夜班
+  上午（12:00 前）登录过的视为白班人员；只在午后/晚间登录的视为中班人员
+  （中班 14:00-18:00、20:00-23:00，会提前几分钟登录，如 13:54）
 """
 
 from __future__ import annotations
@@ -80,16 +79,14 @@ class ShiftRules:
         return name.strip().lower() in self.night_names
 
     def vote(self, m: int) -> str:
-        """按一天内分钟数判定时段：白班 [day_s, day_e]；中班 (day_e, mid_last_e]；
-        其余（深夜）为夜班。"""
-        if m < self.day_s or m > self.mid_last_e:
-            return "夜班"
+        """非名单客服按一天内分钟数判定：<= day_e 白班，其余中班。
+        （夜班专属名单内的人，任何时间都只可能是白班/中班，不会标夜班。）"""
         if m <= self.day_e:
             return "白班"
         return "中班"
 
     def row_shift(self, name: str, m: int) -> str:
-        """单条分配记录的班次：夜班名单固定为夜班，其余按时间落段。"""
+        """单条分配记录的班次：夜班名单固定为夜班，其余按时间落段（仅白/中）。"""
         if self.is_fixed_night(name):
             return "夜班"
         return self.vote(m)
@@ -98,16 +95,15 @@ class ShiftRules:
                        tz_offset_hours: int) -> dict[str, str]:
         """按「人」判定上下线会话的班次（同一人统一标注）。
 
-        判定依据是其全部登录时刻：上午（12:00 前）登录过 → 白班人员；
-        只在午后/晚间（12:00-中班结束）登录 → 中班人员（中班 14:00-18:00、
-        20:00-23:00，会提前几分钟登录，如 13:54）；只出现在深夜 → 夜班。
-        夜班名单固定为夜班。上午登录的证据优先（白班人员午休后重新上线
-        也在午后，不应误判为中班）。
+        判定依据是其全部登录时刻：上午（12:00 前，含提前到岗的凌晨尾巴）
+        登录过的视为白班人员；只在午后/晚间（12:00 及以后）登录的视为中班
+        人员（中班 14:00-18:00、20:00-23:00，会提前几分钟登录，如 13:54）。
+        上午登录的证据优先（白班人员午休后重新上线也在午后，不应误判）。
+        夜班名单固定为夜班——非名单的人永远不会被判成夜班。
         """
         NOON = 12 * 60
         morning: set[str] = set()
         afternoon: set[str] = set()
-        night_only: set[str] = set()
         labels: dict[str, str] = {}
         for r in session_rows:
             name = r["agent_name"]
@@ -116,18 +112,14 @@ class ShiftRules:
                 continue
             local = _shift_tz(r["start_utc"], tz_offset_hours)
             m = local.hour * 60 + local.minute
-            if self.day_s <= m < NOON:
+            if m < NOON:
                 morning.add(name)
-            elif NOON <= m <= self.mid_last_e:
-                afternoon.add(name)
             else:
-                night_only.add(name)
+                afternoon.add(name)
         for name in afternoon - morning:
             labels[name] = "中班"
         for name in morning:
             labels[name] = "白班"
-        for name in night_only - morning - afternoon:
-            labels[name] = "夜班"
         return labels
 
 
