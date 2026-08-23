@@ -251,6 +251,68 @@ menu_view_cron() {
     pause
 }
 
+menu_edit_night_list() {
+    echo "${BLUE}夜班人员名单管理${NC}"
+    py_json '
+names = cfg["report"]["night_shift_agents"]
+print("当前夜班人员:", ", ".join(names) if names else "(空)")
+print("（名单内的人永远标夜班并归入夜班页；其他人只会判白班/中班）")
+'
+    echo
+    cat <<'EOF'
+  1) 新增夜班人员
+  2) 移除夜班人员
+  0) 返回
+EOF
+    read -r -p "$(printf "${YELLOW}请选择 [0-2]: ${NC}")" SUB
+    case "$SUB" in
+        1)
+            read -r -p "$(printf "${YELLOW}输入要新增的专员名称（多个用逗号分隔）: ${NC}")" RAW
+            [[ -z "$RAW" ]] && { warn "未输入，已取消。"; pause; return; }
+            py_json "
+import re
+inputs=[x.strip() for x in re.split(r'[,;，\s]+','''$RAW''') if x.strip()]
+existing={n.strip().lower() for n in cfg['report']['night_shift_agents']}
+new=[n for n in inputs if n.lower() not in existing]
+cfg['report']['night_shift_agents'].extend(new)
+config_utils.save_config(cfg,cfg_path)
+print('已新增:', ', '.join(new) if new else '(无，均已存在)')
+print('当前名单:', ', '.join(cfg['report']['night_shift_agents']) or '(空)')
+"
+            ;;
+        2)
+            py_json '
+names = cfg["report"]["night_shift_agents"]
+if not names:
+    print("名单为空，无可移除项。")
+else:
+    for i,n in enumerate(names,1): print(f"  {i}) {n}")
+'
+            read -r -p "$(printf "${YELLOW}输入要移除的序号或名称（多个用逗号分隔）: ${NC}")" RAW
+            [[ -z "$RAW" ]] && { warn "未输入，已取消。"; pause; return; }
+            py_json "
+import re
+inputs=[x.strip() for x in re.split(r'[,;，\s]+','''$RAW''') if x.strip()]
+names=cfg['report']['night_shift_agents']
+to_del=set()
+for x in inputs:
+    if x.isdigit() and 1<=int(x)<=len(names):
+        to_del.add(names[int(x)-1])
+    else:
+        for n in names:
+            if n.lower()==x.lower():
+                to_del.add(n)
+cfg['report']['night_shift_agents']=[n for n in names if n not in to_del]
+config_utils.save_config(cfg,cfg_path)
+print('已移除:', ', '.join(sorted(to_del)) if to_del else '(无匹配)')
+print('当前名单:', ', '.join(cfg['report']['night_shift_agents']) or '(空)')
+"
+            ;;
+        *) ;;
+    esac
+    pause
+}
+
 menu_uninstall() {
     bash "$SCRIPT_DIR/uninstall.sh"
     exit 0
@@ -272,10 +334,11 @@ while true; do
   9) 立即生成并发送一次报表（测试）
  10) 查看数据统计与最近日志
  11) 查看 cron 任务
- 12) 卸载
+ 12) 修改夜班人员名单
+ 13) 卸载
   0) 退出
 EOF
-    read -r -p "$(printf "${YELLOW}请选择 [0-12]: ${NC}")" CHOICE
+    read -r -p "$(printf "${YELLOW}请选择 [0-13]: ${NC}")" CHOICE
     case "$CHOICE" in
         1)  menu_view ;;
         2)  menu_add_recipient ;;
@@ -288,7 +351,8 @@ EOF
         9)  menu_push_now ;;
         10) menu_status ;;
         11) menu_view_cron ;;
-        12) menu_uninstall ;;
+        12) menu_edit_night_list ;;
+        13) menu_uninstall ;;
         0)  echo "再见。"; exit 0 ;;
         *)  warn "无效选择" ;;
     esac
