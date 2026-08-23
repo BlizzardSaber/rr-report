@@ -9,12 +9,13 @@
 样式：全表 Arial 10、时间列 yyyy-mm-dd hh:mm:ss、冻结首行；
 明细页不按人分组（同一人的记录按时间与其他人自然穿插）。
 
-班次判定（夜班专属固定名单，其余人只会被判白班或中班）：
-- 分配数据 / 按客服汇总：逐行按记录时间落段——白班时段 08:30-18:00（含
-  更早的提前接单），收班后 18:00 起为中班；夜班名单内的人永远夜班
-- 上下线两页：按「人」判定（同一个人的会话统一标注）——
-  上午（12:00 前）登录过的视为白班人员；只在午后/晚间登录的视为中班人员
-  （中班 14:00-18:00、20:00-23:00，会提前几分钟登录，如 13:54）
+班次判定（全表统一按「人」判定，与上下线页一致）：
+- 每个客服的整体班次由其登录模式推断：上午（12:00 前）登录过 → 白班人员；
+  只在午后/晚间登录 → 中班人员（中班 14:00-18:00、20:00-23:00，会提前
+  几分钟登录，如 13:54）；夜班名单固定夜班——非名单的人永远不判夜班
+- 分配数据 / 按客服汇总 / 上下线两页均使用该人的整体班次；
+  仅当某人只有分配记录、完全没有登录记录时，才退回按记录时间落段
+  （<=18:00 白班 / >18:00 中班）
 """
 
 from __future__ import annotations
@@ -183,10 +184,18 @@ def build_report_xlsx(
     """
     report_cfg = report_cfg or {}
     rules = ShiftRules(report_cfg)
+    # 全表统一：每个人一个整体班次（按登录模式推断），分配页/汇总页/上下线页共用
+    session_shift_map = rules.session_shifts(session_rows, tz_offset_hours)
+
+    def row_shift(name: str, m: int) -> str:
+        """优先用该人的整体班次；无登录记录的客服退回按时间落段。"""
+        if name in session_shift_map:
+            return session_shift_map[name]
+        return rules.row_shift(name, m)
 
     wb = Workbook()
 
-    # ---- Sheet1 分配数据（整体时间倒序；班次逐行按记录时间判定） ----
+    # ---- Sheet1 分配数据（整体时间倒序；班次为该客服的整体班次） ----
     ws1 = wb.active
     ws1.title = SHEET1_NAME
     ws1.append(SHEET1_HEADERS)
@@ -196,7 +205,7 @@ def build_report_xlsx(
         ws1.append([
             local,
             int(r["ticket_id"]) if str(r["ticket_id"]).isdigit() else r["ticket_id"],
-            rules.row_shift(r["agent_name"], local.hour * 60 + local.minute),
+            row_shift(r["agent_name"], local.hour * 60 + local.minute),
             r["agent_name"],
             r["queue_name"],
             r["id"],
@@ -206,7 +215,6 @@ def build_report_xlsx(
     _style_sheet(ws1, SHEET1_WIDTHS, autofilter=True)
 
     # ---- Sheet2 上下线数据拆两页：夜班 / 白中班（均按上线时间倒序） ----
-    session_shift_map = rules.session_shifts(session_rows, tz_offset_hours)
     night_rows = [r for r in session_rows if rules.is_fixed_night(r["agent_name"])]
     other_rows = [r for r in session_rows if not rules.is_fixed_night(r["agent_name"])]
     _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, session_shift_map,
@@ -219,7 +227,7 @@ def build_report_xlsx(
     summary: dict[tuple, dict[str, set]] = {}
     for r in assignment_rows:
         local = _shift_tz(r["event_date_utc"], tz_offset_hours)
-        shift_label = rules.row_shift(r["agent_name"], local.hour * 60 + local.minute)
+        shift_label = row_shift(r["agent_name"], local.hour * 60 + local.minute)
         key = (local.strftime("%Y-%m-%d"), SUMMARY_SHIFT_ORDER.get(shift_label, 0),
                shift_label, r["agent_name"])
         agg = summary.setdefault(key, {"tickets": set(), "count": 0})
