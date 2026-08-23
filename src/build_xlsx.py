@@ -92,35 +92,51 @@ class ShiftRules:
             return "夜班"
         return self.vote(m)
 
-    def session_shifts(self, session_rows: list[dict[str, Any]],
-                       tz_offset_hours: int) -> dict[str, str]:
-        """按「人」判定上下线会话的班次（同一人统一标注）。
+    def person_shifts(self, assignment_rows: list[dict[str, Any]],
+                      session_rows: list[dict[str, Any]],
+                      tz_offset_hours: int) -> dict[str, str]:
+        """按「人」判定整体班次（同一人在所有页签统一标注）。
 
-        判定依据是其全部登录时刻：上午（12:00 前，含提前到岗的凌晨尾巴）
-        登录过的视为白班人员；只在午后/晚间（12:00 及以后）登录的视为中班
-        人员（中班 14:00-18:00、20:00-23:00，会提前几分钟登录，如 13:54）。
-        上午登录的证据优先（白班人员午休后重新上线也在午后，不应误判）。
-        夜班名单固定为夜班——非名单的人永远不会被判成夜班。
+        证据来源为该人全部登录时刻 + 全部分配时刻（跨整个报表窗口）：
+        - 上午（12:00 前）有过登录或分配 → 白班人员（证据优先）；
+        - 无上午活动、但晚间（18:00 后）有登录或分配 → 中班人员
+          （中班 14:00-18:00、20:00-23:00，必然参与晚间时段）；
+        - 只有下午（12:00-18:00）活动 → 白班人员（覆盖白班人员
+          临时支援下午分配、但不参与晚间中班时段的场景）；
+        - 夜班名单固定夜班——非名单的人永远不会被判成夜班。
         """
         NOON = 12 * 60
         morning: set[str] = set()
-        afternoon: set[str] = set()
+        evening: set[str] = set()
         labels: dict[str, str] = {}
+
+        def collect(name: str, m: int) -> None:
+            if m < NOON:
+                morning.add(name)
+            elif m > self.day_e:
+                evening.add(name)
+
         for r in session_rows:
             name = r["agent_name"]
             if self.is_fixed_night(name):
                 labels[name] = "夜班"
                 continue
             local = _shift_tz(r["start_utc"], tz_offset_hours)
-            m = local.hour * 60 + local.minute
-            if m < NOON:
-                morning.add(name)
-            else:
-                afternoon.add(name)
-        for name in afternoon - morning:
+            collect(name, local.hour * 60 + local.minute)
+        for r in assignment_rows:
+            name = r["agent_name"]
+            if self.is_fixed_night(name):
+                labels[name] = "夜班"
+                continue
+            local = _shift_tz(r["event_date_utc"], tz_offset_hours)
+            collect(name, local.hour * 60 + local.minute)
+
+        for name in evening - morning:
             labels[name] = "中班"
         for name in morning:
             labels[name] = "白班"
+        for r in list(session_rows) + list(assignment_rows):
+            labels.setdefault(r["agent_name"], "白班")  # 仅下午活动 → 白班
         return labels
 
 
@@ -141,7 +157,7 @@ def _write_session_sheet(ws, rows: list[dict[str, Any]],
     """写一个上下线工作表：班次|客服|上线|下线|状态。
 
     排序：上线日期倒序（最新日期最上）→ 同日期内客服姓名按字母表 →
-    同人内上线时间倒序。班次为该客服的整体班次（见 ShiftRules.session_shifts）。
+    同人内上线时间倒序。班次为该客服的整体班次（见 ShiftRules.person_shifts）。
     """
 
     def sort_key(r: dict[str, Any]):
@@ -184,8 +200,9 @@ def build_report_xlsx(
     """
     report_cfg = report_cfg or {}
     rules = ShiftRules(report_cfg)
-    # 全表统一：每个人一个整体班次（按登录模式推断），分配页/汇总页/上下线页共用
-    session_shift_map = rules.session_shifts(session_rows, tz_offset_hours)
+    # 全表统一：每个人一个整体班次（按登录+分配的活动时段推断），全部分配/汇总/上下线页共用
+    session_shift_map = rules.person_shifts(assignment_rows, session_rows,
+                                            tz_offset_hours)
 
     def row_shift(name: str, m: int) -> str:
         """优先用该人的整体班次；无登录记录的客服退回按时间落段。"""
