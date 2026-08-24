@@ -173,17 +173,21 @@ def _style_sheet(ws, widths: dict[str, float], autofilter: bool = False) -> None
 
 def _write_session_sheet(ws, rows: list[dict[str, Any]],
                          day_shifts: dict[tuple[str, str], str],
-                         tz_offset_hours: int) -> None:
+                         tz_offset_hours: int,
+                         now_utc: datetime | None = None) -> None:
     """写一个上下线工作表：班次|客服|上线|下线|状态。
 
-    排序：上线日期倒序（最新日期最上）→ 同日期内客服姓名按字母表 →
-    同人内上线时间倒序。班次为该客服在登录当天的班次（per_day_shifts）。
+    排序（以下线时间为基准）：下线日期倒序（最新日期最上）→ 同日期内
+    客服姓名按字母表 → 同人内下线时间倒序。进行中的会话按报表时刻
+    作为下线时间（排在最新日期最前）。班次为该客服在登录当天的班次。
     """
+    now_utc = now_utc or datetime.utcnow()
 
     def sort_key(r: dict[str, Any]):
-        local = _shift_tz(r["start_utc"], tz_offset_hours)
-        return (-int(local.strftime("%Y%m%d")), r["agent_name"].lower(),
-                -r["start_utc"].timestamp())
+        end = r["end_utc"] or now_utc
+        end_local = _shift_tz(end, tz_offset_hours)
+        return (-int(end_local.strftime("%Y%m%d")), r["agent_name"].lower(),
+                -end.timestamp())
 
     ws.append(SHEET2_HEADERS)
     for r in sorted(rows, key=sort_key):
@@ -275,9 +279,9 @@ def build_report_xlsx(
     night_rows = [r for r in session_rows if rules.is_fixed_night(r["agent_name"])]
     other_rows = [r for r in session_rows if not rules.is_fixed_night(r["agent_name"])]
     _write_session_sheet(wb.create_sheet(SHEET2N_NAME), night_rows, day_shifts,
-                         tz_offset_hours)
+                         tz_offset_hours, now_utc)
     _write_session_sheet(wb.create_sheet(SHEET2D_NAME), other_rows, day_shifts,
-                         tz_offset_hours)
+                         tz_offset_hours, now_utc)
 
     # ---- Sheet3 按客服汇总（每天每客服每班次：去重工单数 + 记录数） ----
     ws3 = wb.create_sheet(SHEET3_NAME)
