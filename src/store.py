@@ -176,7 +176,9 @@ def query_sessions_since(days: int, now_utc: datetime,
                          since: datetime | None = None) -> list[dict[str, Any]]:
     """取窗口内的上下线会话，按上线时间倒序。
 
-    days=0 表示不过滤（全部累积）；since 显式指定窗口起点时优先生效。
+    以「下线时间」为窗口基准（与报表排序口径一致）：下线时间在窗口内即收录，
+    跨月会话（上月末上线、本月下线）归入本月；进行中的会话按当前时刻计，
+    必然收录。days=0 表示不过滤（全部累积）。
     """
     if since is None:
         since = (now_utc - timedelta(days=days)
@@ -187,9 +189,9 @@ def query_sessions_since(days: int, now_utc: datetime,
         cur = conn.execute(
             """SELECT agent_name, start_utc, end_utc
                FROM agent_sessions
-               WHERE start_utc >= ?
+               WHERE COALESCE(end_utc, ?) >= ?
                ORDER BY start_utc DESC, agent_name""",
-            (since,),
+            (_fmt(now_utc), since),
         )
         return [
             {"agent_name": r[0], "start_utc": _parse(r[1]),
