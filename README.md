@@ -166,8 +166,10 @@ rr-report/
 ```
 
 通常不需要手改，用 `./manage.sh` 即可。`report` 各项说明：
-- `assignment_window_hours`：分配明细取数窗口（小时），`0` = 全部累积数据（默认）；
-  `availability_days`：上下线明细取数窗口（天），`0` = 全部累积数据（默认）
+- `assignment_window_hours`：分配明细取数窗口，`-1` = 本自然月（默认，每月一张新表，
+  上月数据不再展示但仍存档于数据库）、`0` = 全部累积、`>0` = 近 N 小时；
+  `availability_days`：上下线明细取数窗口，`-1` = 本自然月（默认）、`0` = 全部累积、
+  `>0` = 近 N 天
 - `night_shift_agents`：永远是夜班的客服名单
 - `shifts`：白班/中班时段（UTC+8，中班支持多段），用于自动推断非名单客服的班次
 

@@ -41,8 +41,10 @@ DEFAULTS: dict[str, Any] = {
         "push_times": ["09:00"],
     },
     "report": {
-        "assignment_window_hours": 0,  # 分配明细取数窗口（小时）；0 = 全部累积数据
-        "availability_days": 0,  # 上下线明细取数窗口（天）；0 = 全部累积数据
+        # 分配明细取数窗口：-1 = 本自然月（默认，每月换新表）；0 = 全部累积；>0 = 近 N 小时
+        "assignment_window_hours": -1,
+        # 上下线明细取数窗口：-1 = 本自然月；0 = 全部累积；>0 = 近 N 天
+        "availability_days": -1,
         "schedule_file": "客户专家班表.xlsx",  # 班表兜底；缺失或无该日期时回退行为逻辑
         "night_shift_agents": [],
         "shifts": {

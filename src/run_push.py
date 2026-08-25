@@ -67,11 +67,20 @@ def run(test: bool = False, dry_run: bool = False) -> int:
         log.exception("拉取最新数据失败，改用本地累积数据继续生成报表")
         # 本地库里有历史累积，报表仍可生成，不直接失败
 
-    # 3. 从本地库取报表数据（window=0 表示全部累积）
-    a_rows = store.query_assignment_since(window_hours, now_utc)
-    s_rows = store.query_sessions_since(avail_days, now_utc)
-    window_label = f"近 {window_hours} 小时" if window_hours > 0 else "全部累积"
-    avail_label = f"近 {avail_days} 天" if avail_days > 0 else "全部累积"
+    # 3. 从本地库取报表数据（0=全部累积；-1=本月自然月，按报表时区当月1日起）
+    month_start_utc = None
+    if window_hours == -1 or avail_days == -1:
+        month_start_utc = (report_dt.replace(day=1, hour=0, minute=0, second=0,
+                                             microsecond=0)
+                           - timedelta(hours=tz_offset))
+    a_rows = store.query_assignment_since(
+        window_hours, now_utc, since=month_start_utc if window_hours == -1 else None)
+    s_rows = store.query_sessions_since(
+        avail_days, now_utc, since=month_start_utc if avail_days == -1 else None)
+    window_label = {0: "全部累积", -1: "本月"}.get(
+        window_hours, f"近 {window_hours} 小时")
+    avail_label = {0: "全部累积", -1: "本月"}.get(
+        avail_days, f"近 {avail_days} 天")
     log.info("报表数据：分配 %d 条（%s），会话 %d 条（%s）。",
              len(a_rows), window_label, len(s_rows), avail_label)
 
@@ -97,6 +106,14 @@ def run(test: bool = False, dry_run: bool = False) -> int:
 
     # 6. 组装统计 + 发邮件
     db_stats = store.stats(now_utc)
+    if month_start_utc is not None:
+        since_local = (month_start_utc + timedelta(hours=tz_offset)).strftime(
+            "%Y-%m-%d %H:%M")
+    else:
+        since_local = db_stats["first_event_utc"] or "—"
+        if since_local != "—":
+            since_local = (datetime.strptime(since_local, "%Y-%m-%d %H:%M:%S")
+                           + timedelta(hours=tz_offset)).strftime("%Y-%m-%d %H:%M")
     email_stats = {
         "assignment_label": window_label,
         "assignment_count": len(a_rows),
@@ -104,12 +121,8 @@ def run(test: bool = False, dry_run: bool = False) -> int:
         "agent_count": len({r["agent_name"] for r in a_rows}),
         "session_count": len(s_rows),
         "online_agents": db_stats["online_agents"],
-        "since_local": (db_stats["first_event_utc"] or "—"),
+        "since_local": since_local,
     }
-    if email_stats["since_local"] != "—":
-        since_dt = datetime.strptime(email_stats["since_local"], "%Y-%m-%d %H:%M:%S")
-        email_stats["since_local"] = (
-            since_dt + timedelta(hours=tz_offset)).strftime("%Y-%m-%d %H:%M")
 
     subject, body = send_email.build_default_body(
         email_stats, report_dt.strftime("%Y-%m-%d %H:%M"), is_test=test)
